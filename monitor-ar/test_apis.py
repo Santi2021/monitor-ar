@@ -1,6 +1,7 @@
 import sys
 from datetime import datetime
-from api_helpers import obtener_tasas_bcra, obtener_emae
+from api_helpers from utils.api_helpers import obtener_tasas_bcra, obtener_emae
+
 
 def imprimir_separador():
     print("\n" + "="*70 + "\n")
