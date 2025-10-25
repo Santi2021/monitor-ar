@@ -1,254 +1,237 @@
-cat > monitor-ar/pages/dashboard_macro.py << 'EOF'
 import streamlit as st
+import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import sys
-from pathlib import Path
-
-# Agregar path para imports
-sys.path.append(str(Path(__file__).parent.parent))
-
+from datetime import datetime
 from utils.api_helpers import obtener_tasas_bcra, obtener_emae
 
-# ============================================
-# CONFIGURACIÓN DE PÁGINA
-# ============================================
-
 st.set_page_config(
-    page_title="Dashboard Macro | Monitor AR",
+    page_title="Monitor AR - Dashboard Macro",
     page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# ============================================
-# ESTILOS PERSONALIZADOS (BLOOMBERG STYLE)
-# ============================================
-
+# Estilo oscuro tipo terminal Bloomberg
 st.markdown("""
 <style>
-    /* Fondo oscuro estilo terminal */
     .stApp {
         background-color: #0e1117;
+        color: #00ff41;
     }
-    
-    /* Títulos */
     h1, h2, h3 {
-        color: #00d4ff !important;
+        color: #00ff41;
         font-family: 'Courier New', monospace;
     }
-    
-    /* Métricas */
-    [data-testid="stMetricValue"] {
-        color: #00ff88;
-        font-size: 28px;
-        font-weight: bold;
+    .metric-card {
+        background-color: #1a1d23;
+        border-left: 3px solid #00ff41;
+        padding: 15px;
+        margin: 10px 0;
+        border-radius: 5px;
     }
-    
-    /* Contenedores */
-    .stContainer {
-        background-color: #1a1d29;
-        border: 1px solid #2d3748;
-        border-radius: 8px;
-        padding: 20px;
-    }
-    
-    /* Sidebar */
-    [data-testid="stSidebar"] {
-        background-color: #0a0c10;
-    }
-    
-    /* Footer */
-    .footer {
-        text-align: center;
-        color: #6c757d;
+    .cache-badge {
+        background-color: #ff9800;
+        color: #000;
+        padding: 2px 8px;
+        border-radius: 3px;
         font-size: 12px;
-        padding: 20px;
-        margin-top: 50px;
-        border-top: 1px solid #2d3748;
+        font-weight: bold;
+        margin-left: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================
-# SIDEBAR
-# ============================================
-
-with st.sidebar:
-    st.markdown("### 📊 Dashboard Macroeconómico")
-    st.markdown("---")
-    
-    st.markdown("#### Fuentes de Datos")
-    st.markdown("- 🏦 BCRA API v3.0")
-    st.markdown("- 📈 Datos.gob Argentina")
-    st.markdown("---")
-    
-    if st.button("🔄 Actualizar Datos", use_container_width=True):
-        st.rerun()
-
-# ============================================
-# HEADER
-# ============================================
-
-st.title("📊 Dashboard Macroeconómico Argentino")
-st.markdown("### Monitor en tiempo real de indicadores clave")
+st.title("📊 Monitor AR - Dashboard Macroeconómico")
 st.markdown("---")
 
-# ============================================
-# SECCIÓN 1: TASAS DE INTERÉS (BCRA)
-# ============================================
+# Obtener datos
+with st.spinner("Cargando datos de tasas BCRA..."):
+    tasas_bcra = obtener_tasas_bcra()
 
-st.subheader("💰 Tasas de Interés — BCRA")
+with st.spinner("Cargando datos de EMAE..."):
+    emae_data = obtener_emae()
 
-with st.spinner("Cargando datos del BCRA..."):
-    tasas_data = obtener_tasas_bcra()
+# === SECCIÓN: TASAS BCRA ===
+st.header("💰 Tasas de Interés (BCRA)")
 
-# Crear gráfico de tasas
-if any(not df.empty for df in tasas_data.values()):
-    fig_tasas = go.Figure()
+col1, col2, col3 = st.columns(3)
+
+# TPM
+with col1:
+    tpm_info = tasas_bcra.get('TPM', {})
+    df_tpm = tpm_info.get('data')
+    cache_tpm = tpm_info.get('desde_cache', False)
     
-    # TPM
-    if not tasas_data['tpm'].empty:
-        df_tpm = tasas_data['tpm'].tail(90)  # Últimos 90 días
-        fig_tasas.add_trace(go.Scatter(
+    titulo_tpm = "Tasa de Política Monetaria (TPM)"
+    if cache_tpm:
+        titulo_tpm += ' <span class="cache-badge">CACHE</span>'
+    
+    st.markdown(f"### {titulo_tpm}", unsafe_allow_html=True)
+    
+    if df_tpm is not None and not df_tpm.empty:
+        ultimo_valor = df_tpm.iloc[-1]['valor']
+        ultima_fecha = df_tpm.iloc[-1]['fecha'].strftime('%Y-%m-%d')
+        
+        st.metric(
+            label=f"Última tasa ({ultima_fecha})",
+            value=f"{ultimo_valor:.2f}%"
+        )
+        
+        fig_tpm = go.Figure()
+        fig_tpm.add_trace(go.Scatter(
             x=df_tpm['fecha'],
             y=df_tpm['valor'],
-            name='Tasa de Política Monetaria',
-            line=dict(color='#00d4ff', width=3)
+            mode='lines',
+            name='TPM',
+            line=dict(color='#00ff41', width=2)
         ))
+        fig_tpm.update_layout(
+            template='plotly_dark',
+            height=300,
+            margin=dict(l=0, r=0, t=30, b=0),
+            showlegend=False,
+            paper_bgcolor='#0e1117',
+            plot_bgcolor='#1a1d23'
+        )
+        st.plotly_chart(fig_tpm, use_container_width=True)
+    else:
+        st.warning("⚠️ No hay datos disponibles para TPM")
+
+# BADLAR
+with col2:
+    badlar_info = tasas_bcra.get('BADLAR', {})
+    df_badlar = badlar_info.get('data')
+    cache_badlar = badlar_info.get('desde_cache', False)
     
-    # BADLAR
-    if not tasas_data['badlar'].empty:
-        df_badlar = tasas_data['badlar'].tail(90)
-        fig_tasas.add_trace(go.Scatter(
+    titulo_badlar = "BADLAR"
+    if cache_badlar:
+        titulo_badlar += ' <span class="cache-badge">CACHE</span>'
+    
+    st.markdown(f"### {titulo_badlar}", unsafe_allow_html=True)
+    
+    if df_badlar is not None and not df_badlar.empty:
+        ultimo_valor = df_badlar.iloc[-1]['valor']
+        ultima_fecha = df_badlar.iloc[-1]['fecha'].strftime('%Y-%m-%d')
+        
+        st.metric(
+            label=f"Última tasa ({ultima_fecha})",
+            value=f"{ultimo_valor:.2f}%"
+        )
+        
+        fig_badlar = go.Figure()
+        fig_badlar.add_trace(go.Scatter(
             x=df_badlar['fecha'],
             y=df_badlar['valor'],
-            name='BADLAR Privados',
-            line=dict(color='#00ff88', width=2)
+            mode='lines',
+            name='BADLAR',
+            line=dict(color='#ffa500', width=2)
         ))
-    
-    # PF USD
-    if not tasas_data['pf_usd'].empty:
-        df_pf = tasas_data['pf_usd'].tail(90)
-        fig_tasas.add_trace(go.Scatter(
-            x=df_pf['fecha'],
-            y=df_pf['valor'],
-            name='Plazo Fijo USD',
-            line=dict(color='#ff6b6b', width=2)
-        ))
-    
-    # Layout
-    fig_tasas.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='#0e1117',
-        plot_bgcolor='#1a1d29',
-        height=450,
-        hovermode='x unified',
-        xaxis=dict(title='Fecha', gridcolor='#2d3748'),
-        yaxis=dict(title='TNA %', gridcolor='#2d3748'),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
+        fig_badlar.update_layout(
+            template='plotly_dark',
+            height=300,
+            margin=dict(l=0, r=0, t=30, b=0),
+            showlegend=False,
+            paper_bgcolor='#0e1117',
+            plot_bgcolor='#1a1d23'
         )
-    )
-    
-    st.plotly_chart(fig_tasas, use_container_width=True)
-    
-    # Métricas actuales
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if not tasas_data['tpm'].empty:
-            ultimo_tpm = tasas_data['tpm'].iloc[-1]['valor']
-            st.metric("TPM Actual", f"{ultimo_tpm:.2f}%")
-    
-    with col2:
-        if not tasas_data['badlar'].empty:
-            ultimo_badlar = tasas_data['badlar'].iloc[-1]['valor']
-            st.metric("BADLAR", f"{ultimo_badlar:.2f}%")
-    
-    with col3:
-        if not tasas_data['pf_usd'].empty:
-            ultimo_pf = tasas_data['pf_usd'].iloc[-1]['valor']
-            st.metric("PF USD", f"{ultimo_pf:.2f}%")
+        st.plotly_chart(fig_badlar, use_container_width=True)
+    else:
+        st.warning("⚠️ No hay datos disponibles para BADLAR")
 
-else:
-    st.warning("⚠️ No se pudieron cargar las tasas del BCRA en este momento.")
-
-st.markdown("---")
-
-# ============================================
-# SECCIÓN 2: EMAE (ACTIVIDAD ECONÓMICA)
-# ============================================
-
-st.subheader("📈 Estimador Mensual de Actividad Económica (EMAE)")
-
-with st.spinner("Cargando datos del EMAE..."):
-    df_emae = obtener_emae()
-
-if not df_emae.empty:
-    # Últimos 24 meses
-    df_emae_reciente = df_emae.tail(24)
+# Plazo Fijo USD
+with col3:
+    pf_usd_info = tasas_bcra.get('PF_USD', {})
+    df_pf_usd = pf_usd_info.get('data')
+    cache_pf_usd = pf_usd_info.get('desde_cache', False)
     
-    fig_emae = go.Figure()
+    titulo_pf = "Plazo Fijo USD"
+    if cache_pf_usd:
+        titulo_pf += ' <span class="cache-badge">CACHE</span>'
     
-    fig_emae.add_trace(go.Scatter(
-        x=df_emae_reciente['fecha'],
-        y=df_emae_reciente['valor'],
-        mode='lines+markers',
-        name='EMAE Desestacionalizado',
-        line=dict(color='#00d4ff', width=3),
-        marker=dict(size=6)
-    ))
+    st.markdown(f"### {titulo_pf}", unsafe_allow_html=True)
     
-    # Layout
-    fig_emae.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='#0e1117',
-        plot_bgcolor='#1a1d29',
-        height=450,
-        hovermode='x unified',
-        xaxis=dict(title='Fecha', gridcolor='#2d3748'),
-        yaxis=dict(title='Índice Base 2004=100', gridcolor='#2d3748')
-    )
-    
-    st.plotly_chart(fig_emae, use_container_width=True)
-    
-    # Métrica actual
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        valor_actual = df_emae_reciente.iloc[-1]['valor']
-        st.metric("EMAE Actual", f"{valor_actual:.2f}")
-    
-    with col2:
-        if len(df_emae_reciente) >= 2:
-            valor_anterior = df_emae_reciente.iloc[-2]['valor']
-            variacion = ((valor_actual / valor_anterior - 1) * 100)
-            st.metric("Variación Mensual", f"{variacion:+.2f}%")
-    
-    with col3:
-        if len(df_emae_reciente) >= 13:
-            valor_anio_anterior = df_emae_reciente.iloc[-13]['valor']
-            variacion_anual = ((valor_actual / valor_anio_anterior - 1) * 100)
-            st.metric("Variación Interanual", f"{variacion_anual:+.2f}%")
-
-else:
-    st.warning("⚠️ No se pudieron cargar los datos del EMAE en este momento.")
-
-# ============================================
-# FOOTER
-# ============================================
+    if df_pf_usd is not None and not df_pf_usd.empty:
+        ultimo_valor = df_pf_usd.iloc[-1]['valor']
+        ultima_fecha = df_pf_usd.iloc[-1]['fecha'].strftime('%Y-%m-%d')
+        
+        st.metric(
+            label=f"Última tasa ({ultima_fecha})",
+            value=f"{ultimo_valor:.2f}%"
+        )
+        
+        fig_pf = go.Figure()
+        fig_pf.add_trace(go.Scatter(
+            x=df_pf_usd['fecha'],
+            y=df_pf_usd['valor'],
+            mode='lines',
+            name='PF USD',
+            line=dict(color='#00bfff', width=2)
+        ))
+        fig_pf.update_layout(
+            template='plotly_dark',
+            height=300,
+            margin=dict(l=0, r=0, t=30, b=0),
+            showlegend=False,
+            paper_bgcolor='#0e1117',
+            plot_bgcolor='#1a1d23'
+        )
+        st.plotly_chart(fig_pf, use_container_width=True)
+    else:
+        st.warning("⚠️ No hay datos disponibles para Plazo Fijo USD")
 
 st.markdown("---")
-st.markdown("""
-<div class="footer">
-    <strong>Monitor AR v2.0</strong> | Dashboard Macroeconómico Argentino<br>
-    Datos provistos por <strong>BCRA</strong> y <strong>Datos.gob Argentina</strong> | Actualización automática<br>
-    Desarrollado con <strong>Streamlit + Plotly</strong>
-</div>
-""", unsafe_allow_html=True)
-EOF
+
+# === SECCIÓN: EMAE ===
+st.header("📈 Actividad Económica (EMAE)")
+
+df_emae = emae_data.get('data')
+cache_emae = emae_data.get('desde_cache', False)
+
+titulo_emae = "Estimador Mensual de Actividad Económica"
+if cache_emae:
+    titulo_emae += ' <span class="cache-badge">CACHE</span>'
+
+st.markdown(f"### {titulo_emae}", unsafe_allow_html=True)
+
+if df_emae is not None and not df_emae.empty:
+    ultimo_valor = df_emae.iloc[-1]['valor']
+    ultima_fecha = df_emae.iloc[-1]['fecha'].strftime('%Y-%m-%d')
+    
+    col1, col2 = st.columns([1, 3])
+    
+    with col1:
+        st.metric(
+            label=f"Último valor ({ultima_fecha})",
+            value=f"{ultimo_valor:.2f}"
+        )
+        st.caption(f"Base 2004 = 100")
+        st.caption(f"Total de observaciones: {len(df_emae)}")
+    
+    with col2:
+        fig_emae = go.Figure()
+        fig_emae.add_trace(go.Scatter(
+            x=df_emae['fecha'],
+            y=df_emae['valor'],
+            mode='lines',
+            name='EMAE',
+            line=dict(color='#00ff41', width=2),
+            fill='tozeroy',
+            fillcolor='rgba(0, 255, 65, 0.1)'
+        ))
+        fig_emae.update_layout(
+            template='plotly_dark',
+            height=400,
+            margin=dict(l=0, r=0, t=30, b=0),
+            showlegend=False,
+            paper_bgcolor='#0e1117',
+            plot_bgcolor='#1a1d23',
+            yaxis_title="Índice (base 2004=100)"
+        )
+        st.plotly_chart(fig_emae, use_container_width=True)
+else:
+    st.warning("⚠️ No hay datos disponibles para EMAE. Verifique su conexión o intente más tarde.")
+
+# Footer
+st.markdown("---")
+st.caption("🔄 Los datos se actualizan automáticamente desde fuentes oficiales (BCRA, datos.gob.ar)")
+if any([cache_tpm, cache_badlar, cache_pf_usd, cache_emae]):
+    st.caption("⚠️ Algunos datos provienen de caché local debido a problemas de conectividad")
