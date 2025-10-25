@@ -162,4 +162,3 @@ def obtener_emae() -> pd.DataFrame:
     df = obtener_emae_csv_fallback()
     
     return df
-EOF
