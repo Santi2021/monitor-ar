@@ -1,4 +1,3 @@
-cat > monitor-ar/utils/api_helpers.py << 'EOF'
 import requests
 import pandas as pd
 import streamlit as st
