@@ -45,7 +45,7 @@ def inicializar_cliente():
         return None
 
 
-def consultar_claude(cliente, pregunta, modelo="claude-3-5-sonnet-20241022"):
+def consultar_claude(cliente, pregunta, modelo="claude-3-5-sonnet-latest"):
     """
     Envía una pregunta a Claude y obtiene la respuesta.
     
