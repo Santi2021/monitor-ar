@@ -39,5 +39,3 @@ else:
 print("\n" + "=" * 60)
 print("✅ Pruebas finalizadas")
 EOF
-
-chmod +x monitor-ar/test_apis.py
