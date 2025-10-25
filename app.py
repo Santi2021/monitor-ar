@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -6,826 +5,667 @@ import json
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
-from urllib3.exceptions import InsecureRequestWarning
 import urllib3
+from anthropic import Anthropic
 
-# Desactivar warnings SSL globalmente
-urllib3.disable_warnings(InsecureRequestWarning)
-
-# ============================================================================
-# CONFIGURACIÓN GLOBAL
-# ============================================================================
-
-st.set_page_config(
-    page_title="Dashboard Económico Argentina",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# Desactivar warnings SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================================================
-# SERIES CANÓNICAS V1
+# CONFIGURACIÓN DE SERIES (CURADURÍA)
 # ============================================================================
-
-SERIES_CANONICAS = [
+CONFIG_SERIES = [
     {
-        "pack": "monetarias_financieras",
         "source": "BCRA",
-        "id": "1",
-        "nombre_canonico": "Monetarias y Financieras · Base Monetaria — Total [Millones ARS]",
-        "unidad": "Millones ARS",
-        "frecuencia": "Diaria",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 1},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
+        "name": "Reservas Internacionales",
+        "id_or_resource": "1",  # ID real de Reservas en API BCRA v4
+        "endpoint_url": "https://api.bcra.gob.ar/estadisticas/v4.0/DatosVariable",
+        "params": {},
+        "date_field": "fecha",
+        "value_field": "valor",
+        "freq": "diaria",
+        "unit": "USD millones",
+        "notes": "Reservas Internacionales del BCRA en millones de dólares"
     },
     {
-        "pack": "monetarias_financieras",
-        "source": "BCRA",
-        "id": "7",
-        "nombre_canonico": "Monetarias y Financieras · Reservas Internacionales — Total [Millones USD]",
-        "unidad": "Millones USD",
-        "frecuencia": "Diaria",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 7},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "tasas_interes",
-        "source": "BCRA",
-        "id": "3",
-        "nombre_canonico": "Tasas de Interés · BADLAR — Privados [TNA %]",
-        "unidad": "TNA %",
-        "frecuencia": "Diaria",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 3},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "tasas_interes",
-        "source": "BCRA",
-        "id": "4",
-        "nombre_canonico": "Tasas de Interés · Plazo Fijo — Personas hasta $10M [TNA %]",
-        "unidad": "TNA %",
-        "frecuencia": "Diaria",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 4},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "tasas_interes",
-        "source": "BCRA",
-        "id": "5",
-        "nombre_canonico": "Tasas de Interés · Pases Pasivos — 1 Día [TNA %]",
-        "unidad": "TNA %",
-        "frecuencia": "Diaria",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 5},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "tipo_cambio",
-        "source": "BCRA",
-        "id": "4",
-        "nombre_canonico": "Tipo de Cambio · Dólar — Mayorista Promedio [ARS/USD]",
-        "unidad": "ARS/USD",
-        "frecuencia": "Diaria",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 4},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "inflacion",
         "source": "CKAN",
-        "resource_id": "145c4e6d-c7f3-4cd0-8357-81734ab86167",
-        "nombre_canonico": "Inflación · IPC Nacional — Nivel General [Índice base 2016=100]",
-        "unidad": "Índice",
-        "frecuencia": "Mensual",
-        "endpoint": "https://datos.gob.ar/api/3/action/datastore_search",
-        "params": {"resource_id": "145c4e6d-c7f3-4cd0-8357-81734ab86167", "limit": 1000},
-        "campo_fecha": "indice_tiempo",
-        "campo_valor": "nivel_general"
-    },
-    {
-        "pack": "inflacion",
-        "source": "CKAN",
-        "resource_id": "145c4e6d-c7f3-4cd0-8357-81734ab86167",
-        "nombre_canonico": "Inflación · IPC Nacional — Variación Mensual [% m/m]",
-        "unidad": "% m/m",
-        "frecuencia": "Mensual",
-        "endpoint": "https://datos.gob.ar/api/3/action/datastore_search",
-        "params": {"resource_id": "145c4e6d-c7f3-4cd0-8357-81734ab86167", "limit": 1000},
-        "campo_fecha": "indice_tiempo",
-        "campo_valor": "nivel_general_mensual"
-    },
-    {
-        "pack": "inflacion",
-        "source": "CKAN",
-        "resource_id": "145c4e6d-c7f3-4cd0-8357-81734ab86167",
-        "nombre_canonico": "Inflación · IPC Nacional — Variación Interanual [% y/y]",
-        "unidad": "% y/y",
-        "frecuencia": "Mensual",
-        "endpoint": "https://datos.gob.ar/api/3/action/datastore_search",
-        "params": {"resource_id": "145c4e6d-c7f3-4cd0-8357-81734ab86167", "limit": 1000},
-        "campo_fecha": "indice_tiempo",
-        "campo_valor": "nivel_general_interanual"
-    },
-    {
-        "pack": "actividad_economica",
-        "source": "BCRA",
-        "id": "11",
-        "nombre_canonico": "Actividad Económica · EMAE — Nivel [Índice base 2004=100]",
-        "unidad": "Índice",
-        "frecuencia": "Mensual",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 11},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "sector_externo",
-        "source": "BCRA",
-        "id": "23",
-        "nombre_canonico": "Sector Externo · Exportaciones — Total [Millones USD]",
-        "unidad": "Millones USD",
-        "frecuencia": "Mensual",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 23},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "sector_externo",
-        "source": "BCRA",
-        "id": "24",
-        "nombre_canonico": "Sector Externo · Importaciones — Total [Millones USD]",
-        "unidad": "Millones USD",
-        "frecuencia": "Mensual",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 24},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "agregados_monetarios",
-        "source": "BCRA",
-        "id": "28",
-        "nombre_canonico": "Agregados Monetarios · M2 Privado — Total [Millones ARS]",
-        "unidad": "Millones ARS",
-        "frecuencia": "Diaria",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 28},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "fiscal",
-        "source": "BCRA",
-        "id": "6",
-        "nombre_canonico": "Fiscal · Depósitos del Sector Público — Total [Millones ARS]",
-        "unidad": "Millones ARS",
-        "frecuencia": "Diaria",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 6},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
-    },
-    {
-        "pack": "credito",
-        "source": "BCRA",
-        "id": "12",
-        "nombre_canonico": "Crédito · Préstamos al Sector Privado — Total [Millones ARS]",
-        "unidad": "Millones ARS",
-        "frecuencia": "Mensual",
-        "endpoint": "estadisticas/v2.0/DatosVariable",
-        "params": {"idVariable": 12},
-        "campo_fecha": "fecha",
-        "campo_valor": "valor"
+        "name": "IPC Nivel General - Variación Mensual",
+        "id_or_resource": "145c52ee-11f3-4194-a84e-7db3e88a53c1",  # Resource ID real de IPC
+        "endpoint_url": "https://datos.gob.ar/api/3/action/datastore_search",
+        "params": {"limit": 500},
+        "date_field": "indice_tiempo",
+        "value_field": "ipc_ng_variacion_mensual",
+        "freq": "mensual",
+        "unit": "%",
+        "notes": "Variación mensual del IPC Nivel General (INDEC)"
     }
 ]
 
 # ============================================================================
-# FUNCIONES UTILITARIAS DE RED
+# ESTILOS CSS (BLOOMBERG-INSPIRED)
 # ============================================================================
-
-def fetch_bcra_list():
-    """Obtiene lista de variables disponibles del BCRA"""
-    url = "https://api.bcra.gob.ar/estadisticas/v2.0/principalesvariables"
-    try:
-        response = requests.get(url, timeout=15, verify=False)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('results', [])
-    except Exception as e:
-        st.warning(f"⚠️ Error al obtener lista BCRA: {str(e)}")
-    return []
-
-def fetch_bcra_series(id_variable, n=1000):
-    """Obtiene serie de datos del BCRA por ID"""
-    url = f"https://api.bcra.gob.ar/estadisticas/v2.0/DatosVariable/{id_variable}/{n}"
-    try:
-        response = requests.get(url, timeout=15, verify=False)
-        if response.status_code == 200:
-            data = response.json()
-            results = data.get('results', [])
-            if results:
-                df = pd.DataFrame(results)
-                return df
-    except Exception as e:
-        st.warning(f"⚠️ Error al obtener serie BCRA ID {id_variable}: {str(e)}")
-    return None
-
-def ckan_search(q="", limit=20, offset=0):
-    """Busca datasets en CKAN datos.gob.ar"""
-    url = "https://datos.gob.ar/api/3/action/package_search"
-    params = {
-        "q": q,
-        "rows": limit,
-        "start": offset
+def apply_custom_styles():
+    st.markdown("""
+    <style>
+    /* Importar fuente */
+    @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap');
+    
+    /* Variables de color */
+    :root {
+        --bg-main: #1E1E1E;
+        --bg-card: #2A2A2A;
+        --text-primary: #E8E8E8;
+        --text-secondary: #A0A0A0;
+        --accent: #0077FF;
+        --border: #333333;
+        --success: #00CC66;
+        --error: #FF3333;
     }
-    try:
-        response = requests.get(url, params=params, timeout=15, verify=False)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('result', {})
-    except Exception as e:
-        st.warning(f"⚠️ Error en búsqueda CKAN: {str(e)}")
-    return {}
-
-def ckan_preview(resource_id, limit=100):
-    """Obtiene preview de un recurso CKAN"""
-    url = "https://datos.gob.ar/api/3/action/datastore_search"
-    params = {
-        "resource_id": resource_id,
-        "limit": limit
+    
+    /* Fondo principal */
+    .stApp {
+        background-color: var(--bg-main);
+        font-family: 'Segoe UI', Arial, sans-serif;
+        color: var(--text-primary);
     }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: var(--bg-main);
+        border-right: 1px solid var(--border);
+    }
+    
+    [data-testid="stSidebar"] .css-1d391kg {
+        color: var(--text-secondary);
+    }
+    
+    /* Títulos */
+    h1, h2, h3 {
+        color: var(--text-primary) !important;
+        font-weight: 700;
+    }
+    
+    h1 {
+        font-size: 26px !important;
+    }
+    
+    h2 {
+        font-size: 22px !important;
+    }
+    
+    h3 {
+        font-size: 18px !important;
+    }
+    
+    /* Tarjetas */
+    .card {
+        background-color: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 20px;
+        margin: 10px 0;
+        transition: all 0.3s ease;
+    }
+    
+    .card:hover {
+        border-color: var(--accent);
+        box-shadow: 0 0 10px rgba(0, 119, 255, 0.3);
+    }
+    
+    /* Badges */
+    .badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 3px;
+        font-size: 12px;
+        font-weight: 600;
+        margin: 0 5px;
+    }
+    
+    .badge-bcra {
+        background-color: var(--accent);
+        color: white;
+    }
+    
+    .badge-ckan {
+        background-color: var(--success);
+        color: white;
+    }
+    
+    .badge-pendiente {
+        background-color: #FF9500;
+        color: white;
+    }
+    
+    /* Botones */
+    .stButton>button {
+        background-color: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 8px 16px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .stButton>button:hover {
+        background-color: #005BB5;
+        box-shadow: 0 2px 8px rgba(0, 119, 255, 0.4);
+    }
+    
+    /* Métricas */
+    [data-testid="stMetricValue"] {
+        color: var(--accent) !important;
+        font-size: 28px !important;
+        font-weight: 700 !important;
+    }
+    
+    [data-testid="stMetricLabel"] {
+        color: var(--text-secondary) !important;
+        font-size: 14px !important;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-primary) !important;
+    }
+    
+    /* Texto */
+    p, span, div {
+        color: var(--text-primary);
+    }
+    
+    /* Tablas */
+    .dataframe {
+        color: var(--text-primary) !important;
+        background-color: var(--bg-card) !important;
+    }
+    
+    /* Header custom */
+    .main-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 0;
+        border-bottom: 2px solid var(--accent);
+        margin-bottom: 30px;
+    }
+    
+    .main-header h1 {
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .version {
+        color: var(--text-secondary);
+        font-size: 14px;
+    }
+    
+    /* Spinner */
+    .stSpinner > div {
+        border-color: var(--accent) !important;
+    }
+    
+    /* Warnings y errores */
+    .stAlert {
+        background-color: var(--bg-card);
+        border-left: 4px solid var(--accent);
+        color: var(--text-primary);
+    }
+    
+    /* Download button */
+    .download-btn {
+        background-color: var(--success) !important;
+    }
+    
+    .download-btn:hover {
+        background-color: #00994D !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# ============================================================================
+# UTILIDADES DE RED
+# ============================================================================
+
+def fetch_bcra_series(id_serie, n=1000):
+    """
+    Obtiene serie de BCRA API v4.0
+    """
     try:
-        response = requests.get(url, params=params, timeout=15, verify=False)
-        if response.status_code == 200:
-            data = response.json()
-            records = data.get('result', {}).get('records', [])
-            if records:
-                return pd.DataFrame(records)
-    except Exception as e:
-        st.warning(f"⚠️ Error al obtener recurso CKAN {resource_id}: {str(e)}")
-    return None
-
-def detect_timeseries(df):
-    """Detecta columnas de fecha y valor en un DataFrame"""
-    date_cols = []
-    value_cols = []
-    
-    for col in df.columns:
-        col_lower = col.lower()
-        # Detectar fechas
-        if any(x in col_lower for x in ['fecha', 'date', 'time', 'periodo', 'indice_tiempo']):
-            date_cols.append(col)
-        # Detectar valores numéricos
-        elif df[col].dtype in ['float64', 'int64'] and col.lower() != '_id':
-            value_cols.append(col)
-    
-    return date_cols, value_cols
-
-# ============================================================================
-# FUNCIONES DE FILTRADO ANTI-RUIDO
-# ============================================================================
-
-def es_tasa_ruido(nombre):
-    """Detecta tasas TEA/TEM/efectivas que generan ruido"""
-    nombre_lower = nombre.lower()
-    ruido_keywords = ['tea', 'tem', 'efectiva', 'cft']
-    return any(kw in nombre_lower for kw in ruido_keywords)
-
-def normalizar_nombre(nombre):
-    """Normaliza nombre para detectar duplicados"""
-    return nombre.casefold().strip()
-
-def extraer_unidad(descripcion):
-    """Extrae badge de unidad desde descripción"""
-    desc_lower = descripcion.lower()
-    
-    if 'tna' in desc_lower:
-        return 'TNA'
-    elif 'tea' in desc_lower:
-        return 'TEA'
-    elif 'tem' in desc_lower:
-        return 'TEM'
-    elif '% y/y' in desc_lower or 'interanual' in desc_lower:
-        return '% y/y'
-    elif '% m/m' in desc_lower or 'mensual' in desc_lower:
-        return '% m/m'
-    elif 'índice' in desc_lower or 'indice' in desc_lower or 'nivel' in desc_lower:
-        return 'Nivel'
-    elif 'millones' in desc_lower:
-        if 'usd' in desc_lower:
-            return 'Millones USD'
+        url = f"https://api.bcra.gob.ar/estadisticas/v4.0/DatosVariable/{id_serie}/{n}"
+        response = requests.get(url, timeout=15, verify=False)
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'results' in data:
+            df = pd.DataFrame(data['results'])
+            return df, None
         else:
-            return 'Millones ARS'
-    elif '%' in desc_lower:
-        return '%'
-    else:
-        return 'Valor'
+            return None, "Formato de respuesta inesperado"
+    except requests.exceptions.SSLError:
+        return None, "Error SSL - BCRA API (común en ambientes locales)"
+    except requests.exceptions.Timeout:
+        return None, "Timeout - API BCRA no responde"
+    except Exception as e:
+        return None, f"Error: {str(e)}"
 
-# ============================================================================
-# FUNCIONES DE OBTENCIÓN Y PROCESAMIENTO DE SERIES
-# ============================================================================
+def fetch_ckan_series(resource_id, limit=500):
+    """
+    Obtiene serie de datos.gob.ar (CKAN)
+    """
+    try:
+        url = "https://datos.gob.ar/api/3/action/datastore_search"
+        params = {
+            "resource_id": resource_id,
+            "limit": limit
+        }
+        response = requests.get(url, params=params, timeout=15, verify=False)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get('success') and 'result' in data:
+            records = data['result']['records']
+            df = pd.DataFrame(records)
+            return df, None
+        else:
+            return None, "Formato de respuesta inesperado"
+    except Exception as e:
+        return None, f"Error: {str(e)}"
 
-def obtener_serie_canonica(config):
-    """Obtiene datos de una serie canónica según su configuración"""
-    if config['source'] == 'BCRA':
-        df = fetch_bcra_series(config['id'])
-        if df is not None and not df.empty:
-            df[config['campo_fecha']] = pd.to_datetime(df[config['campo_fecha']])
-            df = df.sort_values(config['campo_fecha'])
-            return df
+def detect_timeseries(df, date_field=None, value_field=None):
+    """
+    Detecta y normaliza serie temporal
+    """
+    if df is None or df.empty:
+        return None
     
-    elif config['source'] == 'CKAN':
-        df = ckan_preview(config['resource_id'], limit=1000)
-        if df is not None and not df.empty:
+    # Usar campos explícitos si están definidos
+    if date_field and value_field:
+        if date_field in df.columns and value_field in df.columns:
             try:
-                df[config['campo_fecha']] = pd.to_datetime(df[config['campo_fecha']])
-                df = df.sort_values(config['campo_fecha'])
-                return df
+                df_clean = df[[date_field, value_field]].copy()
+                df_clean[date_field] = pd.to_datetime(df_clean[date_field], errors='coerce')
+                df_clean = df_clean.dropna()
+                df_clean = df_clean.sort_values(date_field)
+                df_clean.columns = ['fecha', 'valor']
+                df_clean['valor'] = pd.to_numeric(df_clean['valor'], errors='coerce')
+                return df_clean
             except:
                 pass
     
-    return None
-
-def obtener_ultima_observacion(df, campo_fecha, campo_valor):
-    """Obtiene la última observación válida de una serie"""
-    if df is None or df.empty:
-        return None, None
+    # Heurística fallback
+    date_cols = [col for col in df.columns if 'fecha' in col.lower() or 'date' in col.lower() or 'tiempo' in col.lower()]
+    value_cols = [col for col in df.columns if 'valor' in col.lower() or 'value' in col.lower() or 'variacion' in col.lower()]
     
-    try:
-        df_clean = df[[campo_fecha, campo_valor]].dropna()
-        if df_clean.empty:
-            return None, None
-        
-        ultima = df_clean.iloc[-1]
-        fecha = ultima[campo_fecha]
-        valor = ultima[campo_valor]
-        
-        return fecha, valor
-    except:
-        return None, None
+    if date_cols and value_cols:
+        try:
+            df_clean = df[[date_cols[0], value_cols[0]]].copy()
+            df_clean.columns = ['fecha', 'valor']
+            df_clean['fecha'] = pd.to_datetime(df_clean['fecha'], errors='coerce')
+            df_clean['valor'] = pd.to_numeric(df_clean['valor'], errors='coerce')
+            df_clean = df_clean.dropna()
+            df_clean = df_clean.sort_values('fecha')
+            return df_clean
+        except:
+            pass
+    
+    return None
 
 # ============================================================================
 # COMPONENTES UI
 # ============================================================================
 
-def render_serie_card(config, col_container=None):
-    """Renderiza una tarjeta de serie con datos actualizados"""
-    container = col_container if col_container else st
-    
-    with container.container():
-        st.markdown(f"""
-        <div style="border: 1px solid #ddd; border-radius: 10px; padding: 15px; background: white; height: 100%;">
-            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">{config['nombre_canonico']}</h4>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Botón de actualización
-        if st.button("🔄 Actualizar", key=f"refresh_{config['id']}_{config['source']}"):
-            with st.spinner("Obteniendo datos..."):
-                df = obtener_serie_canonica(config)
-                if df is not None:
-                    st.session_state[f"data_{config['id']}_{config['source']}"] = df
-        
-        # Obtener datos (de cache o nuevos)
-        cache_key = f"data_{config['id']}_{config['source']}"
-        if cache_key not in st.session_state:
-            df = obtener_serie_canonica(config)
-            if df is not None:
-                st.session_state[cache_key] = df
-        else:
-            df = st.session_state[cache_key]
-        
-        # Mostrar última observación
-        if df is not None and not df.empty:
-            fecha, valor = obtener_ultima_observacion(df, config['campo_fecha'], config['campo_valor'])
-            
-            if fecha and valor:
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    st.metric("Última observación", f"{valor:,.2f}")
-                with col2:
-                    st.caption(f"📅 {fecha.strftime('%d/%m/%Y')}")
-                
-                # Tabs para visualización
-                tab1, tab2, tab3 = st.tabs(["📊 Gráfico", "📋 Tabla", "🔍 JSON"])
-                
-                with tab1:
-                    # Gráfico de línea
-                    fig = px.line(
-                        df,
-                        x=config['campo_fecha'],
-                        y=config['campo_valor'],
-                        title=f"{config['frecuencia']} - {config['unidad']}"
-                    )
-                    fig.update_layout(
-                        height=250,
-                        margin=dict(l=0, r=0, t=30, b=0),
-                        xaxis_title="",
-                        yaxis_title=config['unidad']
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with tab2:
-                    # Tabla de datos
-                    st.dataframe(
-                        df[[config['campo_fecha'], config['campo_valor']]].tail(20),
-                        use_container_width=True,
-                        height=250
-                    )
-                
-                with tab3:
-                    # JSON crudo
-                    st.json(df.tail(10).to_dict(orient='records'))
-            else:
-                st.warning("No hay observaciones válidas")
-        else:
-            st.error("❌ No se pudieron obtener datos")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+def render_header():
+    """Header principal estilo Bloomberg"""
+    st.markdown("""
+    <div class="main-header">
+        <h1>🚀 MONITOR AR</h1>
+        <span class="version">v1.0</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-# ============================================================================
-# INICIALIZACIÓN SESSION STATE
-# ============================================================================
-
-if 'custom_series' not in st.session_state:
-    st.session_state.custom_series = []
-
-if 'catalogo_filtro_canonicas' not in st.session_state:
-    st.session_state.catalogo_filtro_canonicas = True
-
-# ============================================================================
-# SIDEBAR NAVEGACIÓN
-# ============================================================================
-
-st.sidebar.title("📊 Dashboard Económico")
-st.sidebar.markdown("---")
-
-menu = st.sidebar.radio(
-    "Navegación",
-    ["🏠 Inicio", "📈 Datos Económicos", "📚 Catálogo", "⭐ Mi Dashboard", "🤖 Asistente"],
-    index=0
-)
-
-st.sidebar.markdown("---")
-st.sidebar.info("""
-**Series Canónicas v1**
-- 15 series preseleccionadas
-- Filtros anti-ruido
-- APIs robustas con timeout
-""")
-
-# ============================================================================
-# PÁGINA: INICIO
-# ============================================================================
-
-if menu == "🏠 Inicio":
-    st.title("📊 Dashboard Económico Argentina")
-    st.markdown("### Acceso unificado a datos económicos oficiales")
+def render_serie_card(serie_config, index):
+    """Renderiza tarjeta individual de serie"""
     
-    st.markdown("---")
+    # Verificar si la serie está completa
+    is_pending = not serie_config.get('id_or_resource') or not serie_config.get('name')
     
-    col1, col2, col3 = st.columns(3)
+    st.markdown(f"""
+    <div class="card">
+        <h3>{serie_config.get('name', 'Sin nombre')}
+            <span class="badge badge-{serie_config.get('source', '').lower()}">{serie_config.get('source', 'N/A')}</span>
+            {'<span class="badge badge-pendiente">PENDIENTE</span>' if is_pending else ''}
+        </h3>
+        <p style="color: var(--text-secondary); font-size: 14px;">{serie_config.get('notes', '')}</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    with col1:
-        st.markdown("""
-        #### 📈 Datos Económicos
-        Explora series preseleccionadas:
-        - Monetarias y Financieras
-        - Tasas de Interés
-        - Tipo de Cambio
-        - Inflación
-        - Actividad Económica
-        """)
+    if is_pending:
+        st.warning("⚠️ Configuración incompleta - pendiente de carga")
+        return
     
-    with col2:
-        st.markdown("""
-        #### 📚 Catálogo
-        Busca y filtra series:
-        - BCRA (Banco Central)
-        - CKAN (Datos Abiertos)
-        - Filtros anti-ruido
-        - Agregar a Dashboard
-        """)
-    
-    with col3:
-        st.markdown("""
-        #### ⭐ Mi Dashboard
-        Series personalizadas:
-        - Canónicas preseleccionadas
-        - Series agregadas manualmente
-        - Visualización en tarjetas
-        - Exportación de datos
-        """)
-    
-    st.markdown("---")
-    
-    st.success("""
-    **✨ Novedades v1:**
-    - 15 series canónicas preconfiguradas
-    - Filtros inteligentes para reducir ruido
-    - Requests robustos con manejo de errores
-    - Nomenclatura normalizada
-    """)
-
-# ============================================================================
-# PÁGINA: DATOS ECONÓMICOS
-# ============================================================================
-
-elif menu == "📈 Datos Económicos":
-    st.title("📈 Datos Económicos - Series Canónicas")
-    
-    # Filtro por pack
-    packs_disponibles = list(set([s['pack'] for s in SERIES_CANONICAS]))
-    pack_seleccionado = st.selectbox(
-        "Filtrar por categoría",
-        ["Todas"] + sorted(packs_disponibles)
-    )
-    
-    # Filtrar series
-    if pack_seleccionado == "Todas":
-        series_filtradas = SERIES_CANONICAS
-    else:
-        series_filtradas = [s for s in SERIES_CANONICAS if s['pack'] == pack_seleccionado]
-    
-    st.markdown(f"**{len(series_filtradas)} series disponibles**")
-    st.markdown("---")
-    
-    # Renderizar en grid de 2 columnas
-    for i in range(0, len(series_filtradas), 2):
-        cols = st.columns(2)
-        
-        for j, col in enumerate(cols):
-            if i + j < len(series_filtradas):
-                with col:
-                    render_serie_card(series_filtradas[i + j])
-
-# ============================================================================
-# PÁGINA: CATÁLOGO
-# ============================================================================
-
-elif menu == "📚 Catálogo":
-    st.title("📚 Catálogo de Series")
-    
-    # Toggle filtro canónicas
     col1, col2 = st.columns([3, 1])
-    with col1:
-        st.markdown("### Explorar series disponibles")
+    
     with col2:
-        st.session_state.catalogo_filtro_canonicas = st.toggle(
-            "Solo canónicas",
-            value=st.session_state.catalogo_filtro_canonicas
-        )
+        if st.button("🔄 Actualizar", key=f"refresh_{index}"):
+            st.rerun()
     
-    tabs = st.tabs(["🏦 BCRA", "🗃️ CKAN Datos Abiertos"])
-    
-    # ========== TAB BCRA ==========
-    with tabs[0]:
-        st.markdown("#### Variables Principales BCRA")
+    # Fetch data
+    with st.spinner("Cargando datos..."):
+        if serie_config['source'] == 'BCRA':
+            df_raw, error = fetch_bcra_series(serie_config['id_or_resource'])
+        elif serie_config['source'] == 'CKAN':
+            df_raw, error = fetch_ckan_series(serie_config['id_or_resource'], 
+                                             serie_config.get('params', {}).get('limit', 500))
+        else:
+            df_raw, error = None, "Fuente no soportada"
         
-        if st.button("🔄 Cargar Variables BCRA"):
-            with st.spinner("Obteniendo catálogo BCRA..."):
-                variables = fetch_bcra_list()
-                st.session_state.bcra_variables = variables
+        if error:
+            st.warning(f"⚠️ {error}")
+            return
         
-        if 'bcra_variables' in st.session_state and st.session_state.bcra_variables:
-            variables = st.session_state.bcra_variables
-            
-            # Filtros anti-ruido
-            if st.session_state.catalogo_filtro_canonicas:
-                variables_filtradas = []
-                nombres_vistos = set()
-                
-                for v in variables:
-                    nombre = v.get('descripcion', '')
-                    
-                    # Filtrar TEA/TEM
-                    if es_tasa_ruido(nombre):
-                        continue
-                    
-                    # Evitar duplicados
-                    nombre_norm = normalizar_nombre(nombre)
-                    if nombre_norm in nombres_vistos:
-                        continue
-                    
-                    nombres_vistos.add(nombre_norm)
-                    variables_filtradas.append(v)
-                
-                variables = variables_filtradas
-            
-            st.info(f"📊 {len(variables)} variables disponibles")
-            
-            # Mostrar tabla
-            for var in variables[:50]:  # Limitar a 50 para performance
-                with st.expander(f"**{var.get('descripcion')}**"):
-                    col1, col2, col3 = st.columns([2, 1, 1])
-                    
-                    with col1:
-                        unidad = extraer_unidad(var.get('descripcion', ''))
-                        st.markdown(f"**Unidad:** `{unidad}`")
-                        st.caption(f"ID: {var.get('idVariable')}")
-                    
-                    with col2:
-                        st.markdown(f"**Último valor:** {var.get('valor', 'N/A')}")
-                    
-                    with col3:
-                        st.caption(f"{var.get('fecha', '')}")
-                    
-                    if st.button("➕ Agregar a Mi Dashboard", key=f"add_bcra_{var.get('idVariable')}"):
-                        nueva_serie = {
-                            "pack": "custom",
-                            "source": "BCRA",
-                            "id": str(var.get('idVariable')),
-                            "nombre_canonico": var.get('descripcion'),
-                            "unidad": unidad,
-                            "frecuencia": "Variable",
-                            "endpoint": "estadisticas/v2.0/DatosVariable",
-                            "params": {"idVariable": var.get('idVariable')},
-                            "campo_fecha": "fecha",
-                            "campo_valor": "valor"
-                        }
-                        st.session_state.custom_series.append(nueva_serie)
-                        st.success("✅ Serie agregada al dashboard")
-    
-    # ========== TAB CKAN ==========
-    with tabs[1]:
-        st.markdown("#### CKAN Datos Abiertos")
+        if df_raw is None or df_raw.empty:
+            st.warning("⚠️ No se obtuvieron datos")
+            return
         
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            query = st.text_input("🔍 Buscar datasets", placeholder="ej: inflación, empleo, comercio...")
-        with col2:
-            if st.button("Buscar"):
-                st.session_state.ckan_query = query
+        # Detectar serie temporal
+        df_ts = detect_timeseries(df_raw, 
+                                  serie_config.get('date_field'), 
+                                  serie_config.get('value_field'))
         
-        # Paginación
-        if 'ckan_page' not in st.session_state:
-            st.session_state.ckan_page = 0
+        if df_ts is None or df_ts.empty:
+            st.warning("⚠️ No se pudo procesar como serie temporal")
+            with st.expander("📄 Ver datos crudos"):
+                st.dataframe(df_raw.head(20))
+            return
         
-        if st.button("🔄 Buscar en CKAN") or 'ckan_query' in st.session_state:
-            query = st.session_state.get('ckan_query', '')
-            offset = st.session_state.ckan_page * 20
-            
-            with st.spinner("Buscando en CKAN..."):
-                result = ckan_search(query, limit=20, offset=offset)
-                
-                if result:
-                    datasets = result.get('results', [])
-                    total = result.get('count', 0)
-                    
-                    st.info(f"📦 {total} datasets encontrados")
-                    
-                    for dataset in datasets:
-                        with st.expander(f"**{dataset.get('title')}**"):
-                            st.markdown(dataset.get('notes', 'Sin descripción')[:200])
-                            
-                            recursos = dataset.get('resources', [])
-                            if recursos:
-                                st.markdown(f"**{len(recursos)} recursos disponibles:**")
-                                
-                                for rec in recursos[:5]:
-                                    col1, col2 = st.columns([3, 1])
-                                    with col1:
-                                        st.caption(f"📄 {rec.get('name', 'Sin nombre')}")
-                                    with col2:
-                                        if st.button("👁️ Preview", key=f"preview_{rec.get('id')}"):
-                                            st.session_state.preview_resource = rec.get('id')
-                    
-                    # Controles de paginación
-                    col1, col2, col3 = st.columns([1, 2, 1])
-                    with col1:
-                        if st.session_state.ckan_page > 0:
-                            if st.button("⬅️ Anterior"):
-                                st.session_state.ckan_page -= 1
-                                st.rerun()
-                    with col3:
-                        if (st.session_state.ckan_page + 1) * 20 < total:
-                            if st.button("Siguiente ➡️"):
-                                st.session_state.ckan_page += 1
-                                st.rerun()
+        # Mostrar métricas
+        ultimo_valor = df_ts['valor'].iloc[-1]
+        ultima_fecha = df_ts['fecha'].iloc[-1]
         
-        # Preview de recurso
-        if 'preview_resource' in st.session_state:
-            st.markdown("---")
-            st.markdown("### 👁️ Preview de Recurso")
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric("Último valor", f"{ultimo_valor:.2f} {serie_config.get('unit', '')}")
+        with col_m2:
+            st.metric("Fecha", ultima_fecha.strftime("%Y-%m-%d"))
+        with col_m3:
+            st.metric("Registros", len(df_ts))
+        
+        # Tabs: Gráfico / Tabla
+        tab1, tab2 = st.tabs(["📈 Gráfico", "📊 Tabla"])
+        
+        with tab1:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=df_ts['fecha'],
+                y=df_ts['valor'],
+                mode='lines',
+                name=serie_config['name'],
+                line=dict(color='#0077FF', width=2)
+            ))
             
-            resource_id = st.session_state.preview_resource
-            df_preview = ckan_preview(resource_id, limit=100)
+            fig.update_layout(
+                plot_bgcolor='#1E1E1E',
+                paper_bgcolor='#1E1E1E',
+                font=dict(color='#E8E8E8'),
+                xaxis=dict(
+                    gridcolor='#333333',
+                    showgrid=True
+                ),
+                yaxis=dict(
+                    gridcolor='#333333',
+                    showgrid=True,
+                    title=serie_config.get('unit', '')
+                ),
+                hovermode='x unified',
+                margin=dict(l=40, r=40, t=40, b=40)
+            )
             
-            if df_preview is not None:
-                st.dataframe(df_preview.head(20))
-                
-                # Detectar series temporales
-                date_cols, value_cols = detect_timeseries(df_preview)
-                
-                if date_cols and value_cols:
-                    st.success(f"✅ Serie temporal detectada")
-                    st.info(f"**Fechas:** {', '.join(date_cols)}")
-                    st.info(f"**Valores:** {', '.join(value_cols)}")
-                    
-                    # Permitir agregar
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        campo_fecha = st.selectbox("Columna de fecha", date_cols)
-                    with col2:
-                        campo_valor = st.selectbox("Columna de valor", value_cols)
-                    
-                    if st.button("➕ Agregar serie al Dashboard"):
-                        nueva_serie = {
-                            "pack": "custom",
-                            "source": "CKAN",
-                            "resource_id": resource_id,
-                            "nombre_canonico": f"CKAN · {campo_valor}",
-                            "unidad": "Valor",
-                            "frecuencia": "Variable",
-                            "endpoint": "https://datos.gob.ar/api/3/action/datastore_search",
-                            "params": {"resource_id": resource_id, "limit": 1000},
-                            "campo_fecha": campo_fecha,
-                            "campo_valor": campo_valor
-                        }
-                        st.session_state.custom_series.append(nueva_serie)
-                        st.success("✅ Serie agregada al dashboard")
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with tab2:
+            st.dataframe(df_ts.tail(50), use_container_width=True)
+            
+            # Botón de descarga
+            csv = df_ts.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="⬇️ Exportar CSV",
+                data=csv,
+                file_name=f"{serie_config['name'].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                key=f"download_{index}"
+            )
+        
+        # Expander con JSON crudo
+        with st.expander("🔍 Ver JSON crudo (primeros 5 registros)"):
+            st.json(df_raw.head(5).to_dict(orient='records'))
 
 # ============================================================================
-# PÁGINA: MI DASHBOARD
+# PÁGINAS
 # ============================================================================
 
-elif menu == "⭐ Mi Dashboard":
-    st.title("⭐ Mi Dashboard Personalizado")
-    
-    # Combinar series canónicas + personalizadas
-    todas_las_series = SERIES_CANONICAS + st.session_state.custom_series
-    
-    if not todas_las_series:
-        st.info("No hay series en el dashboard. Agrega series desde el Catálogo.")
-    else:
-        st.info(f"📊 {len(todas_las_series)} series en tu dashboard")
-        
-        # Renderizar en grid de 3 columnas
-        for i in range(0, len(todas_las_series), 3):
-            cols = st.columns(3)
-            
-            for j, col in enumerate(cols):
-                if i + j < len(todas_las_series):
-                    with col:
-                        render_serie_card(todas_las_series[i + j])
-        
-        st.markdown("---")
-        
-        # Opciones de gestión
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🗑️ Limpiar series personalizadas"):
-                st.session_state.custom_series = []
-                st.success("Series personalizadas eliminadas")
-                st.rerun()
-        
-        with col2:
-            if st.button("💾 Exportar configuración"):
-                config_export = {
-                    "canonicas": SERIES_CANONICAS,
-                    "personalizadas": st.session_state.custom_series
-                }
-                st.download_button(
-                    "📥 Descargar JSON",
-                    data=json.dumps(config_export, indent=2),
-                    file_name="dashboard_config.json",
-                    mime="application/json"
-                )
-
-# ============================================================================
-# PÁGINA: ASISTENTE (mantenida del código anterior)
-# ============================================================================
-
-elif menu == "🤖 Asistente":
-    st.title("🤖 Asistente de Consultas")
-    st.info("Esta funcionalidad mantiene la lógica del asistente anterior. Se integra con las nuevas series canónicas.")
+def page_inicio():
+    """Página de inicio"""
+    render_header()
     
     st.markdown("""
-    ### Próximas mejoras:
-    - Consultas en lenguaje natural sobre series canónicas
-    - Análisis automático de correlaciones
-    - Alertas y notificaciones
-    - Exportación automatizada
+    ## Bienvenido a Monitor AR
+    
+    **Monitor AR** es tu panel de control para seguimiento de variables macroeconómicas argentinas.
+    
+    ### 📊 Funcionalidades
+    
+    - **Dashboard Macro**: Series curadas de BCRA e INDEC
+    - **Mercado**: Visualización de activos vía TradingView
+    - **Asistente IA**: Análisis y consultas con Claude
+    
+    ### 🚀 Comenzar
+    
+    Selecciona una sección en el menú lateral para explorar los datos.
+    
+    ---
+    
+    *Datos actualizados desde fuentes oficiales: BCRA API v4.0 y datos.gob.ar*
+    """)
+
+def page_dashboard():
+    """Dashboard de series macroeconómicas"""
+    render_header()
+    
+    st.title("📊 Dashboard Macro")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown(f"**{len(CONFIG_SERIES)}** series configuradas")
+    with col2:
+        if st.button("🔄 Actualizar todas"):
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # Renderizar cada serie
+    for idx, serie in enumerate(CONFIG_SERIES):
+        render_serie_card(serie, idx)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+def page_mercado():
+    """Página de mercado con TradingView"""
+    render_header()
+    
+    st.title("📈 Mercado")
+    
+    st.markdown("""
+    Visualización de activos financieros en tiempo real mediante TradingView.
     """)
     
-    # Placeholder para mantener compatibilidad
-    if st.button("Habilitar Asistente IA"):
-        st.warning("Función en desarrollo. Próximamente disponible.")
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        ticker = st.text_input("Símbolo (ticker)", value="SPX", help="Ejemplos: SPX, GLD, BTCUSD, GGAL.BA")
+    
+    with col2:
+        interval = st.selectbox("Intervalo", ["D", "W", "M", "60", "15"], index=0)
+    
+    # Embed de TradingView
+    tradingview_html = f"""
+    <!-- TradingView Widget BEGIN -->
+    <div class="tradingview-widget-container" style="height:600px;width:100%">
+      <div id="tradingview_chart" style="height:calc(100% - 32px);width:100%"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      new TradingView.widget(
+      {{
+        "width": "100%",
+        "height": 568,
+        "symbol": "{ticker}",
+        "interval": "{interval}",
+        "timezone": "America/Argentina/Buenos_Aires",
+        "theme": "dark",
+        "style": "1",
+        "locale": "es",
+        "toolbar_bg": "#1E1E1E",
+        "enable_publishing": false,
+        "backgroundColor": "#1E1E1E",
+        "gridColor": "#333333",
+        "hide_top_toolbar": false,
+        "hide_legend": false,
+        "save_image": true,
+        "container_id": "tradingview_chart"
+      }}
+      );
+      </script>
+    </div>
+    <!-- TradingView Widget END -->
+    """
+    
+    st.components.v1.html(tradingview_html, height=600)
+    
+    st.markdown("---")
+    st.markdown("""
+    **Tickers populares:**
+    - **SPX**: S&P 500
+    - **GLD**: Oro
+    - **BTCUSD**: Bitcoin
+    - **GGAL.BA**: Grupo Financiero Galicia (BYMA)
+    - **YPFD.BA**: YPF (BYMA)
+    - **DXY**: Índice Dólar
+    """)
+
+def page_asistente():
+    """Asistente IA con Claude"""
+    render_header()
+    
+    st.title("🤖 Asistente IA")
+    
+    st.markdown("""
+    Realiza consultas sobre las series cargadas o análisis macroeconómico general.
+    """)
+    
+    # API Key
+    api_key = st.text_input("API Key de Anthropic", type="password", 
+                            help="Ingresa tu API key de Claude")
+    
+    if not api_key:
+        st.info("👆 Ingresa tu API key de Anthropic para comenzar")
+        return
+    
+    # Inicializar historial
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
+    # Mostrar historial
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    # Input del usuario
+    if prompt := st.chat_input("Escribe tu consulta..."):
+        # Agregar mensaje del usuario
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Contexto con series configuradas
+        context = "Series disponibles:\n"
+        for s in CONFIG_SERIES:
+            context += f"- {s['name']} ({s['source']}, {s['freq']}, {s['unit']})\n"
+        
+        # Llamar a Claude
+        try:
+            client = Anthropic(api_key=api_key)
+            
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                full_response = ""
+                
+                with client.messages.stream(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=2000,
+                    messages=[
+                        {"role": "system", "content": f"Eres un asistente experto en macroeconomía argentina. {context}"},
+                        *[{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+                    ]
+                ) as stream:
+                    for text in stream.text_stream:
+                        full_response += text
+                        message_placeholder.markdown(full_response + "▌")
+                
+                message_placeholder.markdown(full_response)
+            
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+        
+        except Exception as e:
+            st.error(f"Error al conectar con Claude: {str(e)}")
 
 # ============================================================================
-# FOOTER
+# MAIN APP
 # ============================================================================
 
-st.markdown("---")
-st.caption("Dashboard Económico Argentina v1.0 | Series Canónicas + Filtros Anti-Ruido | Datos: BCRA + CKAN")
+def main():
+    st.set_page_config(
+        page_title="Monitor AR",
+        page_icon="🚀",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Aplicar estilos
+    apply_custom_styles()
+    
+    # Sidebar
+    with st.sidebar:
+        st.markdown("## 🚀 MONITOR AR")
+        st.markdown("---")
+        
+        page = st.radio(
+            "Navegación",
+            ["🏠 Inicio", "📊 Dashboard Macro", "📈 Mercado", "🤖 Asistente"],
+            label_visibility="collapsed"
+        )
+        
+        st.markdown("---")
+        st.markdown("""
+        <div style="text-align: center; color: var(--text-secondary); font-size: 12px;">
+            <p>Monitor AR v1.0</p>
+            <p>Datos de BCRA y datos.gob.ar</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Router
+    if page == "🏠 Inicio":
+        page_inicio()
+    elif page == "📊 Dashboard Macro":
+        page_dashboard()
+    elif page == "📈 Mercado":
+        page_mercado()
+    elif page == "🤖 Asistente":
+        page_asistente()
+
+if __name__ == "__main__":
+    main()
