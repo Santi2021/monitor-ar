@@ -1,671 +1,567 @@
+# app.py - Monitor AR Dashboard Macroeconómico
+# Sprint 2: Integración BCRA v3.0 + Datos.gob EMAE
+
 import streamlit as st
-import pandas as pd
 import requests
-import json
-from datetime import datetime
-import plotly.express as px
+import pandas as pd
 import plotly.graph_objects as go
-import urllib3
-from anthropic import Anthropic
+from datetime import datetime, timedelta
+import warnings
+warnings.filterwarnings('ignore')
 
-# Desactivar warnings SSL
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🎨 CONFIGURACIÓN DE PÁGINA Y ESTILO BLOOMBERG
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# ============================================================================
-# CONFIGURACIÓN DE SERIES (CURADURÍA)
-# ============================================================================
-CONFIG_SERIES = [
-    {
-        "source": "BCRA",
-        "name": "Reservas Internacionales",
-        "id_or_resource": "1",  # ID real de Reservas en API BCRA v4
-        "endpoint_url": "https://api.bcra.gob.ar/estadisticas/v4.0/DatosVariable",
-        "params": {},
-        "date_field": "fecha",
-        "value_field": "valor",
-        "freq": "diaria",
-        "unit": "USD millones",
-        "notes": "Reservas Internacionales del BCRA en millones de dólares"
-    },
-    {
-        "source": "CKAN",
-        "name": "IPC Nivel General - Variación Mensual",
-        "id_or_resource": "145c52ee-11f3-4194-a84e-7db3e88a53c1",  # Resource ID real de IPC
-        "endpoint_url": "https://datos.gob.ar/api/3/action/datastore_search",
-        "params": {"limit": 500},
-        "date_field": "indice_tiempo",
-        "value_field": "ipc_ng_variacion_mensual",
-        "freq": "mensual",
-        "unit": "%",
-        "notes": "Variación mensual del IPC Nivel General (INDEC)"
-    }
-]
+st.set_page_config(
+    page_title="Monitor AR | Dashboard Macro",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# ============================================================================
-# ESTILOS CSS (BLOOMBERG-INSPIRED)
-# ============================================================================
-def apply_custom_styles():
-    st.markdown("""
-    <style>
-    /* Importar fuente */
-    @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap');
+# Estilos CSS personalizados tipo Bloomberg Terminal
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&display=swap');
     
-    /* Variables de color */
-    :root {
-        --bg-main: #1E1E1E;
-        --bg-card: #2A2A2A;
-        --text-primary: #E8E8E8;
-        --text-secondary: #A0A0A0;
-        --accent: #0077FF;
-        --border: #333333;
-        --success: #00CC66;
-        --error: #FF3333;
-    }
-    
-    /* Fondo principal */
+    /* Fondo principal oscuro */
     .stApp {
-        background-color: var(--bg-main);
-        font-family: 'Segoe UI', Arial, sans-serif;
-        color: var(--text-primary);
+        background-color: #0a0a0a;
+        color: #dddddd;
+        font-family: 'JetBrains Mono', monospace;
     }
     
     /* Sidebar */
     [data-testid="stSidebar"] {
-        background-color: var(--bg-main);
-        border-right: 1px solid var(--border);
+        background-color: #111111;
+        border-right: 1px solid #2E8BFF;
     }
     
     [data-testid="stSidebar"] .css-1d391kg {
-        color: var(--text-secondary);
+        color: #dddddd;
     }
     
     /* Títulos */
     h1, h2, h3 {
-        color: var(--text-primary) !important;
+        font-family: 'JetBrains Mono', monospace;
+        color: #2E8BFF;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }
+    
+    /* Cards personalizadas */
+    .metric-card {
+        background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+        border: 1px solid #2E8BFF;
+        border-radius: 8px;
+        padding: 20px;
+        margin: 10px 0;
+        box-shadow: 0 4px 12px rgba(46, 139, 255, 0.15);
+    }
+    
+    .metric-title {
+        font-size: 0.85rem;
+        color: #888888;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        margin-bottom: 8px;
+    }
+    
+    .metric-value {
+        font-size: 2rem;
+        color: #2E8BFF;
         font-weight: 700;
     }
     
-    h1 {
-        font-size: 26px !important;
+    /* Textos informativos */
+    .info-text {
+        color: #999999;
+        font-size: 0.8rem;
+        font-style: italic;
+        margin-top: 8px;
     }
     
-    h2 {
-        font-size: 22px !important;
-    }
-    
-    h3 {
-        font-size: 18px !important;
-    }
-    
-    /* Tarjetas */
-    .card {
-        background-color: var(--bg-card);
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        padding: 20px;
-        margin: 10px 0;
-        transition: all 0.3s ease;
-    }
-    
-    .card:hover {
-        border-color: var(--accent);
-        box-shadow: 0 0 10px rgba(0, 119, 255, 0.3);
-    }
-    
-    /* Badges */
-    .badge {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 3px;
-        font-size: 12px;
-        font-weight: 600;
-        margin: 0 5px;
-    }
-    
-    .badge-bcra {
-        background-color: var(--accent);
-        color: white;
-    }
-    
-    .badge-ckan {
-        background-color: var(--success);
-        color: white;
-    }
-    
-    .badge-pendiente {
-        background-color: #FF9500;
-        color: white;
+    /* Alertas */
+    .stAlert {
+        background-color: #1a1a1a;
+        border-left: 3px solid #ff6b6b;
+        color: #dddddd;
     }
     
     /* Botones */
     .stButton>button {
-        background-color: var(--accent);
-        color: white;
+        background-color: #2E8BFF;
+        color: #0a0a0a;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
         border: none;
         border-radius: 4px;
-        padding: 8px 16px;
-        font-weight: 600;
+        padding: 10px 24px;
         transition: all 0.3s ease;
     }
     
     .stButton>button:hover {
-        background-color: #005BB5;
-        box-shadow: 0 2px 8px rgba(0, 119, 255, 0.4);
+        background-color: #1a6fd9;
+        box-shadow: 0 0 20px rgba(46, 139, 255, 0.5);
     }
     
-    /* Métricas */
-    [data-testid="stMetricValue"] {
-        color: var(--accent) !important;
-        font-size: 28px !important;
-        font-weight: 700 !important;
+    /* Reducir márgenes por defecto de Streamlit */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
     }
-    
-    [data-testid="stMetricLabel"] {
-        color: var(--text-secondary) !important;
-        font-size: 14px !important;
-    }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        background-color: var(--bg-card);
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        color: var(--text-primary) !important;
-    }
-    
-    /* Texto */
-    p, span, div {
-        color: var(--text-primary);
-    }
-    
-    /* Tablas */
-    .dataframe {
-        color: var(--text-primary) !important;
-        background-color: var(--bg-card) !important;
-    }
-    
-    /* Header custom */
-    .main-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 20px 0;
-        border-bottom: 2px solid var(--accent);
-        margin-bottom: 30px;
-    }
-    
-    .main-header h1 {
-        margin: 0;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    
-    .version {
-        color: var(--text-secondary);
-        font-size: 14px;
-    }
-    
-    /* Spinner */
-    .stSpinner > div {
-        border-color: var(--accent) !important;
-    }
-    
-    /* Warnings y errores */
-    .stAlert {
-        background-color: var(--bg-card);
-        border-left: 4px solid var(--accent);
-        color: var(--text-primary);
-    }
-    
-    /* Download button */
-    .download-btn {
-        background-color: var(--success) !important;
-    }
-    
-    .download-btn:hover {
-        background-color: #00994D !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+</style>
+""", unsafe_allow_html=True)
 
-# ============================================================================
-# UTILIDADES DE RED
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🔌 MÓDULO: BCRA API v3.0
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def fetch_bcra_series(id_serie, n=1000):
+def fetch_monetarias():
     """
-    Obtiene serie de BCRA API v4.0
+    Obtiene series monetarias del BCRA v3.0
+    IDs curados: Tasas de interés y política monetaria
     """
-    try:
-        url = f"https://api.bcra.gob.ar/estadisticas/v4.0/DatosVariable/{id_serie}/{n}"
-        response = requests.get(url, timeout=15, verify=False)
-        response.raise_for_status()
-        data = response.json()
-        
-        if 'results' in data:
-            df = pd.DataFrame(data['results'])
-            return df, None
-        else:
-            return None, "Formato de respuesta inesperado"
-    except requests.exceptions.SSLError:
-        return None, "Error SSL - BCRA API (común en ambientes locales)"
-    except requests.exceptions.Timeout:
-        return None, "Timeout - API BCRA no responde"
-    except Exception as e:
-        return None, f"Error: {str(e)}"
-
-def fetch_ckan_series(resource_id, limit=500):
-    """
-    Obtiene serie de datos.gob.ar (CKAN)
-    """
-    try:
-        url = "https://datos.gob.ar/api/3/action/datastore_search"
-        params = {
-            "resource_id": resource_id,
-            "limit": limit
-        }
-        response = requests.get(url, params=params, timeout=15, verify=False)
-        response.raise_for_status()
-        data = response.json()
-        
-        if data.get('success') and 'result' in data:
-            records = data['result']['records']
-            df = pd.DataFrame(records)
-            return df, None
-        else:
-            return None, "Formato de respuesta inesperado"
-    except Exception as e:
-        return None, f"Error: {str(e)}"
-
-def detect_timeseries(df, date_field=None, value_field=None):
-    """
-    Detecta y normaliza serie temporal
-    """
-    if df is None or df.empty:
-        return None
+    BASE_URL = "https://api.bcra.gob.ar/estadisticas/v3.0"
     
-    # Usar campos explícitos si están definidos
-    if date_field and value_field:
-        if date_field in df.columns and value_field in df.columns:
-            try:
-                df_clean = df[[date_field, value_field]].copy()
-                df_clean[date_field] = pd.to_datetime(df_clean[date_field], errors='coerce')
-                df_clean = df_clean.dropna()
-                df_clean = df_clean.sort_values(date_field)
-                df_clean.columns = ['fecha', 'valor']
-                df_clean['valor'] = pd.to_numeric(df_clean['valor'], errors='coerce')
-                return df_clean
-            except:
-                pass
+    # Diccionario de series monetarias clave
+    SERIES_MONETARIAS = {
+        160: "Tasa de Política Monetaria (TNA %)",
+        145: "BADLAR Privados (TNA %)",
+        132: "Tasa LELIQ 28 días (%)"
+    }
     
-    # Heurística fallback
-    date_cols = [col for col in df.columns if 'fecha' in col.lower() or 'date' in col.lower() or 'tiempo' in col.lower()]
-    value_cols = [col for col in df.columns if 'valor' in col.lower() or 'value' in col.lower() or 'variacion' in col.lower()]
+    resultados = {}
+    fecha_fin = datetime.now().strftime('%Y-%m-%d')
+    fecha_inicio = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
     
-    if date_cols and value_cols:
+    for id_serie, nombre in SERIES_MONETARIAS.items():
         try:
-            df_clean = df[[date_cols[0], value_cols[0]]].copy()
-            df_clean.columns = ['fecha', 'valor']
-            df_clean['fecha'] = pd.to_datetime(df_clean['fecha'], errors='coerce')
-            df_clean['valor'] = pd.to_numeric(df_clean['valor'], errors='coerce')
-            df_clean = df_clean.dropna()
-            df_clean = df_clean.sort_values('fecha')
-            return df_clean
-        except:
-            pass
+            url = f"{BASE_URL}/Datos/Monetarios/{id_serie}/{fecha_inicio}/{fecha_fin}"
+            response = requests.get(url, verify=False, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('results'):
+                    df = pd.DataFrame(data['results'])
+                    df['fecha'] = pd.to_datetime(df['fecha'])
+                    df = df.sort_values('fecha')
+                    df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
+                    
+                    resultados[nombre] = df[['fecha', 'valor']].dropna()
+                    
+        except Exception as e:
+            st.warning(f"⚠️ Error obteniendo {nombre}: {str(e)}")
+            continue
+    
+    return resultados
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🔌 MÓDULO: DATOS.GOB EMAE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_emae():
+    """
+    Obtiene EMAE desestacionalizado desde Datos.gob (API Series)
+    Con fallback a CSV si la API falla
+    """
+    # ID oficial de EMAE desestacionalizado
+    EMAE_ID = "11.3_VMATC_2004_M_36"
+    API_URL = f"https://apis.datos.gob.ar/series/api/series/?ids={EMAE_ID}&format=json&limit=5000"
+    
+    try:
+        # Intento 1: API Series de Datos.gob
+        response = requests.get(API_URL, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if 'data' in data and len(data['data']) > 0:
+                df = pd.DataFrame(data['data'], columns=['fecha', 'valor'])
+                df['fecha'] = pd.to_datetime(df['fecha'])
+                df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
+                df = df.dropna().sort_values('fecha')
+                
+                return df
+        
+        # Intento 2: Fallback a CSV directo
+        CSV_URL = "https://infra.datos.gob.ar/catalog/modernizacion/dataset/1/distribution/1.2/download/emae-valores-trimestrales-base-1993-100.csv"
+        df = pd.read_csv(CSV_URL)
+        
+        # Buscar columna de EMAE desestacionalizado
+        columnas_posibles = [col for col in df.columns if 'desestacionalizado' in col.lower()]
+        
+        if columnas_posibles:
+            df_limpio = df[['indice_tiempo', columnas_posibles[0]]].copy()
+            df_limpio.columns = ['fecha', 'valor']
+            df_limpio['fecha'] = pd.to_datetime(df_limpio['fecha'])
+            df_limpio['valor'] = pd.to_numeric(df_limpio['valor'], errors='coerce')
+            
+            return df_limpio.dropna().sort_values('fecha')
+        
+    except Exception as e:
+        st.error(f"⚠️ No se pudo obtener EMAE: {str(e)}")
+        return None
     
     return None
 
-# ============================================================================
-# COMPONENTES UI
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 📊 FUNCIÓN: GRÁFICO PLOTLY ESTILO BLOOMBERG
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def render_header():
-    """Header principal estilo Bloomberg"""
-    st.markdown("""
-    <div class="main-header">
-        <h1>🚀 MONITOR AR</h1>
-        <span class="version">v1.0</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-def render_serie_card(serie_config, index):
-    """Renderiza tarjeta individual de serie"""
-    
-    # Verificar si la serie está completa
-    is_pending = not serie_config.get('id_or_resource') or not serie_config.get('name')
-    
-    st.markdown(f"""
-    <div class="card">
-        <h3>{serie_config.get('name', 'Sin nombre')}
-            <span class="badge badge-{serie_config.get('source', '').lower()}">{serie_config.get('source', 'N/A')}</span>
-            {'<span class="badge badge-pendiente">PENDIENTE</span>' if is_pending else ''}
-        </h3>
-        <p style="color: var(--text-secondary); font-size: 14px;">{serie_config.get('notes', '')}</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if is_pending:
-        st.warning("⚠️ Configuración incompleta - pendiente de carga")
-        return
-    
-    col1, col2 = st.columns([3, 1])
-    
-    with col2:
-        if st.button("🔄 Actualizar", key=f"refresh_{index}"):
-            st.rerun()
-    
-    # Fetch data
-    with st.spinner("Cargando datos..."):
-        if serie_config['source'] == 'BCRA':
-            df_raw, error = fetch_bcra_series(serie_config['id_or_resource'])
-        elif serie_config['source'] == 'CKAN':
-            df_raw, error = fetch_ckan_series(serie_config['id_or_resource'], 
-                                             serie_config.get('params', {}).get('limit', 500))
-        else:
-            df_raw, error = None, "Fuente no soportada"
-        
-        if error:
-            st.warning(f"⚠️ {error}")
-            return
-        
-        if df_raw is None or df_raw.empty:
-            st.warning("⚠️ No se obtuvieron datos")
-            return
-        
-        # Detectar serie temporal
-        df_ts = detect_timeseries(df_raw, 
-                                  serie_config.get('date_field'), 
-                                  serie_config.get('value_field'))
-        
-        if df_ts is None or df_ts.empty:
-            st.warning("⚠️ No se pudo procesar como serie temporal")
-            with st.expander("📄 Ver datos crudos"):
-                st.dataframe(df_raw.head(20))
-            return
-        
-        # Mostrar métricas
-        ultimo_valor = df_ts['valor'].iloc[-1]
-        ultima_fecha = df_ts['fecha'].iloc[-1]
-        
-        col_m1, col_m2, col_m3 = st.columns(3)
-        with col_m1:
-            st.metric("Último valor", f"{ultimo_valor:.2f} {serie_config.get('unit', '')}")
-        with col_m2:
-            st.metric("Fecha", ultima_fecha.strftime("%Y-%m-%d"))
-        with col_m3:
-            st.metric("Registros", len(df_ts))
-        
-        # Tabs: Gráfico / Tabla
-        tab1, tab2 = st.tabs(["📈 Gráfico", "📊 Tabla"])
-        
-        with tab1:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=df_ts['fecha'],
-                y=df_ts['valor'],
-                mode='lines',
-                name=serie_config['name'],
-                line=dict(color='#0077FF', width=2)
-            ))
-            
-            fig.update_layout(
-                plot_bgcolor='#1E1E1E',
-                paper_bgcolor='#1E1E1E',
-                font=dict(color='#E8E8E8'),
-                xaxis=dict(
-                    gridcolor='#333333',
-                    showgrid=True
-                ),
-                yaxis=dict(
-                    gridcolor='#333333',
-                    showgrid=True,
-                    title=serie_config.get('unit', '')
-                ),
-                hovermode='x unified',
-                margin=dict(l=40, r=40, t=40, b=40)
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with tab2:
-            st.dataframe(df_ts.tail(50), use_container_width=True)
-            
-            # Botón de descarga
-            csv = df_ts.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="⬇️ Exportar CSV",
-                data=csv,
-                file_name=f"{serie_config['name'].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                key=f"download_{index}"
-            )
-        
-        # Expander con JSON crudo
-        with st.expander("🔍 Ver JSON crudo (primeros 5 registros)"):
-            st.json(df_raw.head(5).to_dict(orient='records'))
-
-# ============================================================================
-# PÁGINAS
-# ============================================================================
-
-def page_inicio():
-    """Página de inicio"""
-    render_header()
-    
-    st.markdown("""
-    ## Bienvenido a Monitor AR
-    
-    **Monitor AR** es tu panel de control para seguimiento de variables macroeconómicas argentinas.
-    
-    ### 📊 Funcionalidades
-    
-    - **Dashboard Macro**: Series curadas de BCRA e INDEC
-    - **Mercado**: Visualización de activos vía TradingView
-    - **Asistente IA**: Análisis y consultas con Claude
-    
-    ### 🚀 Comenzar
-    
-    Selecciona una sección en el menú lateral para explorar los datos.
-    
-    ---
-    
-    *Datos actualizados desde fuentes oficiales: BCRA API v4.0 y datos.gob.ar*
-    """)
-
-def page_dashboard():
-    """Dashboard de series macroeconómicas"""
-    render_header()
-    
-    st.title("📊 Dashboard Macro")
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.markdown(f"**{len(CONFIG_SERIES)}** series configuradas")
-    with col2:
-        if st.button("🔄 Actualizar todas"):
-            st.rerun()
-    
-    st.markdown("---")
-    
-    # Renderizar cada serie
-    for idx, serie in enumerate(CONFIG_SERIES):
-        render_serie_card(serie, idx)
-        st.markdown("<br>", unsafe_allow_html=True)
-
-def page_mercado():
-    """Página de mercado con TradingView"""
-    render_header()
-    
-    st.title("📈 Mercado")
-    
-    st.markdown("""
-    Visualización de activos financieros en tiempo real mediante TradingView.
-    """)
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        ticker = st.text_input("Símbolo (ticker)", value="SPX", help="Ejemplos: SPX, GLD, BTCUSD, GGAL.BA")
-    
-    with col2:
-        interval = st.selectbox("Intervalo", ["D", "W", "M", "60", "15"], index=0)
-    
-    # Embed de TradingView
-    tradingview_html = f"""
-    <!-- TradingView Widget BEGIN -->
-    <div class="tradingview-widget-container" style="height:600px;width:100%">
-      <div id="tradingview_chart" style="height:calc(100% - 32px);width:100%"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-      <script type="text/javascript">
-      new TradingView.widget(
-      {{
-        "width": "100%",
-        "height": 568,
-        "symbol": "{ticker}",
-        "interval": "{interval}",
-        "timezone": "America/Argentina/Buenos_Aires",
-        "theme": "dark",
-        "style": "1",
-        "locale": "es",
-        "toolbar_bg": "#1E1E1E",
-        "enable_publishing": false,
-        "backgroundColor": "#1E1E1E",
-        "gridColor": "#333333",
-        "hide_top_toolbar": false,
-        "hide_legend": false,
-        "save_image": true,
-        "container_id": "tradingview_chart"
-      }}
-      );
-      </script>
-    </div>
-    <!-- TradingView Widget END -->
+def crear_grafico_bloomberg(df, titulo, y_label, color="#2E8BFF"):
     """
+    Genera gráfico interactivo con estética Bloomberg Terminal
+    """
+    fig = go.Figure()
     
-    st.components.v1.html(tradingview_html, height=600)
+    fig.add_trace(go.Scatter(
+        x=df['fecha'],
+        y=df['valor'],
+        mode='lines',
+        line=dict(color=color, width=2),
+        fill='tozeroy',
+        fillcolor=f'rgba(46, 139, 255, 0.1)',
+        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Valor: %{y:.2f}<extra></extra>'
+    ))
     
-    st.markdown("---")
-    st.markdown("""
-    **Tickers populares:**
-    - **SPX**: S&P 500
-    - **GLD**: Oro
-    - **BTCUSD**: Bitcoin
-    - **GGAL.BA**: Grupo Financiero Galicia (BYMA)
-    - **YPFD.BA**: YPF (BYMA)
-    - **DXY**: Índice Dólar
-    """)
-
-def page_asistente():
-    """Asistente IA con Claude"""
-    render_header()
-    
-    st.title("🤖 Asistente IA")
-    
-    st.markdown("""
-    Realiza consultas sobre las series cargadas o análisis macroeconómico general.
-    """)
-    
-    # API Key
-    api_key = st.text_input("API Key de Anthropic", type="password", 
-                            help="Ingresa tu API key de Claude")
-    
-    if not api_key:
-        st.info("👆 Ingresa tu API key de Anthropic para comenzar")
-        return
-    
-    # Inicializar historial
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    
-    # Mostrar historial
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-    
-    # Input del usuario
-    if prompt := st.chat_input("Escribe tu consulta..."):
-        # Agregar mensaje del usuario
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        
-        # Contexto con series configuradas
-        context = "Series disponibles:\n"
-        for s in CONFIG_SERIES:
-            context += f"- {s['name']} ({s['source']}, {s['freq']}, {s['unit']})\n"
-        
-        # Llamar a Claude
-        try:
-            client = Anthropic(api_key=api_key)
-            
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                full_response = ""
-                
-                with client.messages.stream(
-                    model="claude-3-5-sonnet-20241022",
-                    max_tokens=2000,
-                    messages=[
-                        {"role": "system", "content": f"Eres un asistente experto en macroeconomía argentina. {context}"},
-                        *[{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
-                    ]
-                ) as stream:
-                    for text in stream.text_stream:
-                        full_response += text
-                        message_placeholder.markdown(full_response + "▌")
-                
-                message_placeholder.markdown(full_response)
-            
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-        
-        except Exception as e:
-            st.error(f"Error al conectar con Claude: {str(e)}")
-
-# ============================================================================
-# MAIN APP
-# ============================================================================
-
-def main():
-    st.set_page_config(
-        page_title="Monitor AR",
-        page_icon="🚀",
-        layout="wide",
-        initial_sidebar_state="expanded"
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text=titulo,
+            font=dict(size=18, color='#2E8BFF', family='JetBrains Mono'),
+            x=0.5,
+            xanchor='center'
+        ),
+        xaxis=dict(
+            title="Fecha",
+            gridcolor='#1a1a1a',
+            showgrid=True
+        ),
+        yaxis=dict(
+            title=y_label,
+            gridcolor='#1a1a1a',
+            showgrid=True
+        ),
+        plot_bgcolor='#0a0a0a',
+        paper_bgcolor='#0a0a0a',
+        font=dict(color='#dddddd', family='JetBrains Mono'),
+        hovermode='x unified',
+        margin=dict(l=60, r=40, t=80, b=60)
     )
     
-    # Aplicar estilos
-    apply_custom_styles()
+    return fig
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🧭 SIDEBAR NAVEGACIÓN
+# ═══════════════════════════════════════════════════════════════════════════════
+
+st.sidebar.markdown("""
+<div style='text-align: center; padding: 20px 0;'>
+    <h1 style='color: #2E8BFF; margin: 0;'>📊</h1>
+    <h2 style='color: #2E8BFF; margin: 0; font-size: 1.5rem;'>MONITOR AR</h2>
+    <p style='color: #666; font-size: 0.75rem; margin-top: 5px;'>Dashboard Macroeconómico</p>
+</div>
+""", unsafe_allow_html=True)
+
+st.sidebar.markdown("---")
+
+# Selector de sección
+seccion = st.sidebar.radio(
+    "NAVEGACIÓN",
+    ["🏠 Inicio", "📊 Dashboard Macro", "💹 Mercado"],
+    label_visibility="collapsed"
+)
+
+st.sidebar.markdown("---")
+
+st.sidebar.markdown("""
+<div style='padding: 15px; background-color: #1a1a1a; border-radius: 5px; border-left: 3px solid #2E8BFF;'>
+    <p style='font-size: 0.7rem; color: #888; margin: 0;'>
+        <b>Fuentes de datos:</b><br>
+        • BCRA API v3.0<br>
+        • Datos.gob Argentina<br>
+        • Actualización en tiempo real
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🏠 SECCIÓN: INICIO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if seccion == "🏠 Inicio":
     
-    # Sidebar
-    with st.sidebar:
-        st.markdown("## 🚀 MONITOR AR")
-        st.markdown("---")
-        
-        page = st.radio(
-            "Navegación",
-            ["🏠 Inicio", "📊 Dashboard Macro", "📈 Mercado", "🤖 Asistente"],
-            label_visibility="collapsed"
-        )
-        
-        st.markdown("---")
+    st.markdown("<h1 style='text-align: center;'>🇦🇷 MONITOR AR</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #888; font-size: 1.1rem;'>Dashboard Macroeconómico Profesional</p>", unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
         st.markdown("""
-        <div style="text-align: center; color: var(--text-secondary); font-size: 12px;">
-            <p>Monitor AR v1.0</p>
-            <p>Datos de BCRA y datos.gob.ar</p>
+        <div class='metric-card'>
+            <div class='metric-title'>📈 Datos en Tiempo Real</div>
+            <p style='color: #dddddd; font-size: 0.9rem;'>
+                Integración directa con APIs oficiales del BCRA y Datos.gob Argentina
+            </p>
         </div>
         """, unsafe_allow_html=True)
     
-    # Router
-    if page == "🏠 Inicio":
-        page_inicio()
-    elif page == "📊 Dashboard Macro":
-        page_dashboard()
-    elif page == "📈 Mercado":
-        page_mercado()
-    elif page == "🤖 Asistente":
-        page_asistente()
+    with col2:
+        st.markdown("""
+        <div class='metric-card'>
+            <div class='metric-title'>💼 Interfaz Profesional</div>
+            <p style='color: #dddddd; font-size: 0.9rem;'>
+                Diseño inspirado en terminales Bloomberg para análisis efectivo
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class='metric-card'>
+            <div class='metric-title'>📊 Indicadores Clave</div>
+            <p style='color: #dddddd; font-size: 0.9rem;'>
+                Seguimiento de tasas, política monetaria y actividad económica
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    
+    st.markdown("### 🎯 Características Principales")
+    
+    st.markdown("""
+    <div style='background-color: #1a1a1a; padding: 20px; border-radius: 8px; border-left: 3px solid #2E8BFF;'>
+        <ul style='color: #dddddd; font-size: 0.95rem;'>
+            <li><b>Series Monetarias BCRA:</b> Tasas de política monetaria, BADLAR, LELIQ</li>
+            <li><b>Indicadores de Actividad:</b> EMAE desestacionalizado</li>
+            <li><b>Visualizaciones Interactivas:</b> Gráficos Plotly con zoom y tooltips</li>
+            <li><b>Actualizaciones Automáticas:</b> Conexión directa con fuentes oficiales</li>
+            <li><b>Diseño Responsivo:</b> Optimizado para desktop y mobile</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    col_a, col_b, col_c = st.columns([1, 2, 1])
+    with col_b:
+        if st.button("🚀 IR AL DASHBOARD", use_container_width=True):
+            st.rerun()
 
-if __name__ == "__main__":
-    main()
+# ═══════════════════════════════════════════════════════════════════════════════
+# 📊 SECCIÓN: DASHBOARD MACRO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+elif seccion == "📊 Dashboard Macro":
+    
+    st.markdown("<h1>📊 Dashboard Macroeconómico</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #888;'>Indicadores clave de la economía argentina en tiempo real</p>", unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECCIÓN 1: TASAS MONETARIAS BCRA
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    st.markdown("### 🏦 Tasas de Interés y Política Monetaria")
+    
+    with st.spinner("📡 Conectando con BCRA API v3.0..."):
+        series_bcra = fetch_monetarias()
+    
+    if series_bcra:
+        # Mostrar último valor de cada tasa en tarjetas
+        cols_tasas = st.columns(len(series_bcra))
+        
+        for idx, (nombre, df) in enumerate(series_bcra.items()):
+            if not df.empty:
+                ultimo_valor = df.iloc[-1]['valor']
+                ultima_fecha = df.iloc[-1]['fecha'].strftime('%d/%m/%Y')
+                
+                with cols_tasas[idx]:
+                    st.markdown(f"""
+                    <div class='metric-card'>
+                        <div class='metric-title'>{nombre.split('(')[0].strip()}</div>
+                        <div class='metric-value'>{ultimo_valor:.2f}%</div>
+                        <div class='info-text'>Actualizado: {ultima_fecha}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Gráfico integrado de todas las tasas
+        fig_tasas = go.Figure()
+        
+        colores = ['#2E8BFF', '#FF6B6B', '#4ECDC4']
+        
+        for idx, (nombre, df) in enumerate(series_bcra.items()):
+            if not df.empty:
+                fig_tasas.add_trace(go.Scatter(
+                    x=df['fecha'],
+                    y=df['valor'],
+                    mode='lines',
+                    name=nombre.split('(')[0].strip(),
+                    line=dict(color=colores[idx % len(colores)], width=2),
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>%{y:.2f}%<extra></extra>'
+                ))
+        
+        fig_tasas.update_layout(
+            template="plotly_dark",
+            title=dict(
+                text="Evolución de Tasas de Interés",
+                font=dict(size=18, color='#2E8BFF', family='JetBrains Mono'),
+                x=0.5,
+                xanchor='center'
+            ),
+            xaxis=dict(title="Fecha", gridcolor='#1a1a1a', showgrid=True),
+            yaxis=dict(title="Tasa (%)", gridcolor='#1a1a1a', showgrid=True),
+            plot_bgcolor='#0a0a0a',
+            paper_bgcolor='#0a0a0a',
+            font=dict(color='#dddddd', family='JetBrains Mono'),
+            hovermode='x unified',
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="center",
+                x=0.5
+            ),
+            height=500,
+            margin=dict(l=60, r=40, t=100, b=60)
+        )
+        
+        st.plotly_chart(fig_tasas, use_container_width=True)
+        
+        st.markdown("""
+        <div class='info-text' style='text-align: center;'>
+            Fuente: Banco Central de la República Argentina (BCRA) - API v3.0 Estadísticas | 
+            Las tasas se expresan en TNA (Tasa Nominal Anual)
+        </div>
+        """, unsafe_allow_html=True)
+        
+    else:
+        st.error("⚠️ Series monetarias no disponibles en este momento. Verifique conectividad con BCRA.")
+    
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECCIÓN 2: EMAE - ACTIVIDAD ECONÓMICA
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    st.markdown("### 📈 Estimador Mensual de Actividad Económica (EMAE)")
+    
+    with st.spinner("📡 Conectando con Datos.gob Argentina..."):
+        df_emae = get_emae()
+    
+    if df_emae is not None and not df_emae.empty:
+        
+        # Tarjeta con último valor
+        ultimo_emae = df_emae.iloc[-1]['valor']
+        fecha_emae = df_emae.iloc[-1]['fecha'].strftime('%m/%Y')
+        
+        # Calcular variación interanual
+        try:
+            hace_12_meses = df_emae.iloc[-13]['valor']
+            var_interanual = ((ultimo_emae - hace_12_meses) / hace_12_meses) * 100
+            var_color = "#4ECDC4" if var_interanual >= 0 else "#FF6B6B"
+            var_simbolo = "▲" if var_interanual >= 0 else "▼"
+        except:
+            var_interanual = None
+            var_color = "#888"
+            var_simbolo = "—"
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"""
+            <div class='metric-card'>
+                <div class='metric-title'>Nivel EMAE (Base 2004=100)</div>
+                <div class='metric-value'>{ultimo_emae:.2f}</div>
+                <div class='info-text'>Período: {fecha_emae}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            if var_interanual is not None:
+                st.markdown(f"""
+                <div class='metric-card'>
+                    <div class='metric-title'>Variación Interanual</div>
+                    <div class='metric-value' style='color: {var_color};'>{var_simbolo} {var_interanual:+.2f}%</div>
+                    <div class='info-text'>vs mismo mes año anterior</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div class='metric-card'>
+                    <div class='metric-title'>Variación Interanual</div>
+                    <div class='metric-value' style='color: #888;'>— N/D</div>
+                    <div class='info-text'>Datos insuficientes</div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Gráfico EMAE
+        fig_emae = crear_grafico_bloomberg(
+            df_emae,
+            "Evolución del EMAE Desestacionalizado",
+            "Índice (Base 2004=100)",
+            "#2E8BFF"
+        )
+        
+        fig_emae.update_layout(height=500)
+        
+        st.plotly_chart(fig_emae, use_container_width=True)
+        
+        st.markdown("""
+        <div class='info-text' style='text-align: center;'>
+            Fuente: INDEC vía Datos.gob Argentina | 
+            Serie desestacionalizada Base 2004=100 | 
+            Actualización mensual con rezago de ~30 días
+        </div>
+        """, unsafe_allow_html=True)
+        
+    else:
+        st.error("⚠️ EMAE no disponible en este momento. Endpoint fuera de servicio o sin datos.")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 💹 SECCIÓN: MERCADO (Placeholder)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+elif seccion == "💹 Mercado":
+    
+    st.markdown("<h1>💹 Mercado Financiero</h1>", unsafe_allow_html=True)
+    
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div style='text-align: center; padding: 60px 20px; background-color: #1a1a1a; border-radius: 10px; border: 2px dashed #2E8BFF;'>
+        <h2 style='color: #2E8BFF; margin-bottom: 20px;'>🚧 Sección en Desarrollo</h2>
+        <p style='color: #888; font-size: 1.1rem;'>
+            Esta funcionalidad estará disponible en el próximo sprint.<br><br>
+            <b>Próximamente:</b><br>
+            • Cotizaciones en tiempo real<br>
+            • Bonos soberanos<br>
+            • Tipo de cambio (oficial y MEP)<br>
+            • Índices bursátiles
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🔚 FOOTER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+st.markdown("<br><br>", unsafe_allow_html=True)
+
+st.markdown("""
+<div style='text-align: center; padding: 20px; color: #555; font-size: 0.75rem; border-top: 1px solid #222;'>
+    Monitor AR v2.0 | Dashboard Macroeconómico Argentino<br>
+    Datos provistos por BCRA y Datos.gob Argentina | Actualización automática<br>
+    Desarrollado con Streamlit + Plotly
+</div>
+""", unsafe_allow_html=True)
