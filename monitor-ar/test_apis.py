@@ -1,4 +1,3 @@
-cat > monitor-ar/test_apis.py << 'EOF'
 #!/usr/bin/env python3
 """
 Script de prueba para validar conectividad con APIs
