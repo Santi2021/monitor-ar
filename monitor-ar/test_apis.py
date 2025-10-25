@@ -37,4 +37,3 @@ else:
 
 print("\n" + "=" * 60)
 print("✅ Pruebas finalizadas")
-EOF
